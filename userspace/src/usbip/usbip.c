@@ -97,14 +97,18 @@ static const struct command cmds[] = {
 		.help  = "Install or reinstall driver for usbip",
 		.usage = usbip_install_usage
 	},
-#if 0 /* Not implemented yet */
+	{
+		.name  = "uninstall",
+		.fn    = usbip_uninstall,
+		.help  = "Remove the usbip driver device node",
+		.usage = usbip_uninstall_usage
+	},
 	{
 		.name  = "port",
 		.fn    = usbip_port_show,
 		.help  = "Show imported USB devices",
 		.usage = NULL
 	},
-#endif
 	{ NULL, NULL, NULL, NULL }
 };
 
@@ -204,5 +208,5 @@ int main(int argc, char *argv[])
 	usbip_help(0, NULL);
 out:
 	cleanup_socket();
-	return (rc > -1 ? EXIT_SUCCESS : EXIT_FAILURE);
+	return (rc == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
 }

@@ -13,11 +13,12 @@ ClassGuid={4D36E97D-E325-11CE-BFC1-08002BE10318}
 Provider=%OpenSource%
 CatalogFile=usbip_stub.cat
 DriverVer = 06/21/2018,0.3.0.0
+PnpLockDown=1
 
 [Manufacturer]
-%StdMfg%=Standard,NTamd64
+%StdMfg%=Standard,NT$ARCH$
 
-[Standard.NTamd64]
+[Standard.NT$ARCH$]
 %DeviceDesc%=usbip_stub_Device, %hwid%
 
 [DestinationDirs]
@@ -32,10 +33,10 @@ usbip_stub.sys  = 1,,
 [Drivers_Dir]
 usbip_stub.sys
 
-[usbip_stub_Device.NTamd64]
+[usbip_stub_Device.NT$ARCH$]
 CopyFiles=Drivers_Dir
 
-[usbip_stub_Device.NTamd64.HW]
+[usbip_stub_Device.NT$ARCH$.HW]
 AddReg=usbip_stub_Device_AddReg
 
 [usbip_stub_Device_AddReg]                            
@@ -45,7 +46,7 @@ HKR,,DeviceCharacteristics,0x10001,0x0100         ; Use same security checks on 
 ;HKR,,Security,,"D:P(A;;GA;;;BA)(A;;GA;;;SY)"      ; Allow generic-all access to Built-in administrators and Local system 
 
 ;-------------- Service installation
-[usbip_stub_Device.NTamd64.Services]
+[usbip_stub_Device.NT$ARCH$.Services]
 AddService = usbip_stub,%SPSVCINST_ASSOCSERVICE%, usbip_stub_Service_Inst
 
 ; -------------- stub driver install sections

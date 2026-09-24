@@ -50,6 +50,7 @@ get_device_path(const char *id_inst)
 	devpath_ctx_t	devpath_ctx;
 	int rc;
 
+	memset(&devpath_ctx, 0, sizeof(devpath_ctx));
 	devpath_ctx.id_inst = id_inst;
 	rc = traverse_intfdevs(walker_devpath, &GUID_DEVINTERFACE_STUB_USBIP, &devpath_ctx);
 	if (rc != -1) {
@@ -110,10 +111,15 @@ get_devpath_from_devno(devno_t devno)
 	char	*devpath;
 	int rc;
 
+	memset(&ctx, 0, sizeof(ctx));
 	ctx.devno = devno;
 	rc = traverse_usbdevs(walker_get_id_inst, TRUE, &ctx);
 	if (rc != -1) {
 		err("%s: traverse_usbdevs failed. traverse_usbdevs returned %d.", __FUNCTION__, rc);
+		return NULL;
+	}
+	if (ctx.id_inst == NULL) {
+		err("%s: device instance ID was not found for devno %hhu.", __FUNCTION__, devno);
 		return NULL;
 	}
 
@@ -152,7 +158,7 @@ build_udev(devno_t devno, struct usbip_usb_device *pudev)
 
 	devpath = get_devpath_from_devno(devno);
 	if (devpath == NULL) {
-		err("%s: invalid devno: %hhu. devpath returned %s", __FUNCTION__, devno, devpath);
+		err("%s: invalid devno: %hhu", __FUNCTION__, devno);
 		return FALSE;
 	}
 
@@ -190,12 +196,13 @@ open_stub_dev(devno_t devno)
 	}
 
 	hdev = CreateFile(devpath, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
-	free(devpath);
 
 	if (hdev == INVALID_HANDLE_VALUE) {
 		err("%s: cannot open device: %s", __FUNCTION__, devpath);
+		free(devpath);
 		return INVALID_HANDLE_VALUE;
 	}
+	free(devpath);
 
 	if (!DeviceIoControl(hdev, IOCTL_USBIP_STUB_EXPORT, NULL, 0, NULL, 0, &len, NULL)) {
 		err("%s: DeviceIoControl failed: err: 0x%lx", __FUNCTION__, GetLastError());

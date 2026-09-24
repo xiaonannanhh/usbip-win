@@ -38,7 +38,7 @@ walker_devpath(HDEVINFO dev_info, PSP_DEVINFO_DATA pdev_info_data, devno_t devno
 static char *
 get_vhci_devpath(void)
 {
-	char	*devpath;
+	char	*devpath = NULL;
 
 	if (traverse_intfdevs(walker_devpath, &GUID_DEVINTERFACE_VHCI_USBIP, &devpath) != -1) {
 		return NULL;
@@ -91,13 +91,13 @@ usbip_vhci_get_ports_status(HANDLE hdev, char *buf, int l)
 int
 usbip_vhci_get_free_port(HANDLE hdev)
 {
-	char	buf[128];
+	ioctl_usbip_vhci_get_ports_status	st;
 	int	i;
 
-	if (usbip_vhci_get_ports_status(hdev, buf, sizeof(buf)))
+	if (usbip_vhci_get_ports_status(hdev, (char *)&st, sizeof(st)))
 		return -1;
-	for(i = 1;i < sizeof(buf); i++) {
-		if (!buf[i])
+	for (i = 1; i < sizeof(st.u.port_status); i++) {
+		if (!st.u.port_status[i])
 			return i;
 	}
 	return -1;
@@ -153,24 +153,34 @@ show_port_status(void)
 {
 	HANDLE fd;
 	int i;
-	char buf[128];
+	ioctl_usbip_vhci_get_ports_status	st;
 
 	fd = usbip_vhci_driver_open();
 	if (INVALID_HANDLE_VALUE == fd) {
 		err("open vhci driver");
 		return -1;
 	}
-	if (usbip_vhci_get_ports_status(fd, buf, sizeof(buf))) {
+	if (usbip_vhci_get_ports_status(fd, (char *)&st, sizeof(st))) {
 		err("get port status");
+		CloseHandle(fd);
 		return -1;
 	}
-	info("max used port:%d\n", buf[0]);
-	for (i = 1; i <= buf[0]; i++) {
-		if (buf[i])
+	info("max used port:%d\n", st.u.max_used_port);
+	for (i = 1; i <= st.u.max_used_port; i++) {
+		if (st.u.port_status[i])
 			info("port %d: used\n", i);
 		else
 			info("port %d: idle\n", i);
 	}
 	CloseHandle(fd);
 	return 0;
+}
+
+int
+usbip_port_show(int argc, char *argv[])
+{
+	UNREFERENCED_PARAMETER(argc);
+	UNREFERENCED_PARAMETER(argv);
+
+	return show_port_status() == 0 ? 0 : -1;
 }

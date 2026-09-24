@@ -138,7 +138,11 @@ sign_file(LPCSTR subject, LPCSTR fpath)
 
 	// Prepare SIGNER_SIGNATURE_INFO struct
 	signerSignatureInfo.cbSize = sizeof(SIGNER_SIGNATURE_INFO);
-	signerSignatureInfo.algidHash = CALG_SHA_256;
+	/*
+	 * Windows 7 SP1 systems without the SHA-2 code-signing update only
+	 * understand SHA-1 driver-package signatures.
+	 */
+	signerSignatureInfo.algidHash = CALG_SHA1;
 	signerSignatureInfo.dwAttrChoice = SIGNER_NO_ATTR;
 	signerSignatureInfo.pAttrAuthcode = NULL;
 	signerSignatureInfo.psAuthenticated = &cryptAttributesArray;

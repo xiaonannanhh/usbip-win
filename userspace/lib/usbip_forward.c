@@ -1,10 +1,10 @@
 #include "usbip_windows.h"
 
-#include <signal.h>
 #include <stdlib.h>
 
 #include "usbip_proto.h"
 #include "usbip_network.h"
+#include "usbip_forward.h"
 
 #define BUFREAD_P(devbuf)	((devbuf)->offp - (devbuf)->offhdr)
 #define BUFREADMAX_P(devbuf)	((devbuf)->bufmaxp - (devbuf)->offp)
@@ -34,12 +34,12 @@ typedef struct _devbuf {
 	HANDLE	hEvent;
 } devbuf_t;
 
-/*
- * Two devbuf's are shared via hEvent, which indicates read or write completion.
- * Such a global variable does not pose a severe limitation.
- * Because userspace binaries(usbip.exe, usbipd.exe) have only a single usbip_forward().
- */
-static HANDLE	hEvent;
+#define OUT_Q_LEN 256
+
+typedef struct _forward_context {
+	HANDLE	hEvent;
+	long	out_q_seqnum_array[OUT_Q_LEN];
+} forward_context_t;
 
 #ifdef DEBUG_PDU
 #undef USING_STDOUT
@@ -259,11 +259,8 @@ swap_iso_descs_endian(char *buf, int num)
 	}
 }
 
-#define OUT_Q_LEN 256
-static long out_q_seqnum_array[OUT_Q_LEN];
-
 static BOOL
-record_outq_seqnum(unsigned long seqnum)
+record_outq_seqnum(forward_context_t *ctx, unsigned long seqnum)
 {
 	int	i;
 
@@ -273,44 +270,44 @@ record_outq_seqnum(unsigned long seqnum)
 		/* record_outq_seqnum can be called multiple times.
 		 * seqnum should be checked if it was already marked.
 		 */
-		if (out_q_seqnum_array[i] == seqnum)
+		if (ctx->out_q_seqnum_array[i] == seqnum)
 			return TRUE;
-		if (out_q_seqnum_array[i])
+		if (ctx->out_q_seqnum_array[i])
 			continue;
 		found_empty_slot = i;
 		for (; i < OUT_Q_LEN; i++) {
-			if (out_q_seqnum_array[i] == seqnum)
+			if (ctx->out_q_seqnum_array[i] == seqnum)
 				return TRUE;
 		}
-		out_q_seqnum_array[found_empty_slot] = seqnum;
+		ctx->out_q_seqnum_array[found_empty_slot] = seqnum;
 		return TRUE;
 	}
 	return FALSE;
 }
 
 static BOOL
-is_outq_seqnum(unsigned long seqnum)
+is_outq_seqnum(forward_context_t *ctx, unsigned long seqnum)
 {
 	int	i;
 
 	for (i = 0; i < OUT_Q_LEN; i++) {
-		if (out_q_seqnum_array[i] != seqnum)
+		if (ctx->out_q_seqnum_array[i] != seqnum)
 			continue;
-		out_q_seqnum_array[i] = 0;
+		ctx->out_q_seqnum_array[i] = 0;
 		return TRUE;
 	}
 	return FALSE;
 }
 
 static int
-get_xfer_len(BOOL is_req, struct usbip_header *hdr)
+get_xfer_len(forward_context_t *ctx, BOOL is_req, struct usbip_header *hdr)
 {
 	if (is_req) {
 		if (hdr->base.command == USBIP_CMD_UNLINK)
 			return 0;
 		if (hdr->base.direction)
 			return 0;
-		if (!record_outq_seqnum(hdr->base.seqnum)) {
+		if (!record_outq_seqnum(ctx, hdr->base.seqnum)) {
 			err("failed to record. out queue full");
 		}
 		return hdr->u.cmd_submit.transfer_buffer_length;
@@ -318,7 +315,7 @@ get_xfer_len(BOOL is_req, struct usbip_header *hdr)
 	else {
 		if (hdr->base.command == USBIP_RET_UNLINK)
 			return 0;
-		if (is_outq_seqnum(hdr->base.seqnum))
+		if (is_outq_seqnum(ctx, hdr->base.seqnum))
 			return 0;
 		return hdr->u.ret_submit.actual_length;
 	}
@@ -494,8 +491,17 @@ write_devbuf(devbuf_t *wbuff, devbuf_t *rbuff)
 	return TRUE;
 }
 
+static void
+cancel_devbuf_io(devbuf_t *buff)
+{
+	if (buff->in_reading)
+		CancelIoEx(buff->hdev, &buff->ovs[0]);
+	if (buff->in_writing)
+		CancelIoEx(buff->hdev, &buff->ovs[1]);
+}
+
 static int
-read_dev(devbuf_t *rbuff, BOOL swap_req_write)
+read_dev(forward_context_t *ctx, devbuf_t *rbuff, BOOL swap_req_write)
 {
 	struct usbip_header	*hdr;
 	unsigned long	xfer_len, iso_len, len_data;
@@ -514,7 +520,7 @@ read_dev(devbuf_t *rbuff, BOOL swap_req_write)
 		rbuff->step_reading = 2;
 	}
 
-	xfer_len = get_xfer_len(rbuff->is_req, hdr);
+	xfer_len = get_xfer_len(ctx, rbuff->is_req, hdr);
 	iso_len = get_iso_len(rbuff->is_req, hdr);
 
 	len_data = xfer_len + iso_len;
@@ -546,12 +552,12 @@ read_dev(devbuf_t *rbuff, BOOL swap_req_write)
 }
 
 static BOOL
-read_write_dev(devbuf_t *rbuff, devbuf_t *wbuff)
+read_write_dev(forward_context_t *ctx, devbuf_t *rbuff, devbuf_t *wbuff)
 {
 	int	res;
 
 	if (!rbuff->in_reading) {
-		if ((res = read_dev(rbuff, wbuff->swap_req)) < 0)
+		if ((res = read_dev(ctx, rbuff, wbuff->swap_req)) < 0)
 			return FALSE;
 		if (res == 0)
 			return TRUE;
@@ -559,22 +565,51 @@ read_write_dev(devbuf_t *rbuff, devbuf_t *wbuff)
 	return write_devbuf(wbuff, rbuff);
 }
 
-static volatile BOOL	interrupted;
-
-static void
-signalhandler(int signal)
+BOOL
+usbip_forward_cancel_init(usbip_forward_cancel_t *cancel)
 {
-	interrupted = TRUE;
-	SetEvent(hEvent);
+	if (cancel == NULL)
+		return FALSE;
+
+	cancel->hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+	return cancel->hEvent != NULL;
 }
 
 void
-usbip_forward(HANDLE hdev_src, HANDLE hdev_dst, BOOL inbound)
+usbip_forward_cancel_request(usbip_forward_cancel_t *cancel)
+{
+	if (cancel != NULL && cancel->hEvent != NULL)
+		SetEvent(cancel->hEvent);
+}
+
+void
+usbip_forward_cancel_cleanup(usbip_forward_cancel_t *cancel)
+{
+	if (cancel != NULL && cancel->hEvent != NULL) {
+		CloseHandle(cancel->hEvent);
+		cancel->hEvent = NULL;
+	}
+}
+
+static BOOL
+forward_is_cancelled(usbip_forward_cancel_t *cancel)
+{
+	if (cancel == NULL || cancel->hEvent == NULL)
+		return FALSE;
+	return WaitForSingleObject(cancel->hEvent, 0) == WAIT_OBJECT_0;
+}
+
+void
+usbip_forward(HANDLE hdev_src, HANDLE hdev_dst, BOOL inbound,
+	usbip_forward_cancel_t *cancel)
 {
 	devbuf_t	buff_src, buff_dst;
+	forward_context_t	ctx;
 	const char* desc_src, * desc_dst;
 	BOOL	is_req_src;
 	BOOL	swap_req_src, swap_req_dst;
+	HANDLE	wait_handles[2];
+	DWORD	n_wait_handles;
 
 	if (inbound) {
 		desc_src = "socket";
@@ -591,19 +626,20 @@ usbip_forward(HANDLE hdev_src, HANDLE hdev_dst, BOOL inbound)
 		swap_req_dst = TRUE;
 	}
 
-	hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
-	if (hEvent == NULL) {
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+	if (ctx.hEvent == NULL) {
 		err("failed to create event");
 		return;
 	}
 
-	if (!init_devbuf(&buff_src, desc_src, TRUE, swap_req_src, hdev_src, hEvent)) {
-		CloseHandle(hEvent);
+	if (!init_devbuf(&buff_src, desc_src, TRUE, swap_req_src, hdev_src, ctx.hEvent)) {
+		CloseHandle(ctx.hEvent);
 		err("%s: failed to initialize %s buffer", __FUNCTION__, desc_src);
 		return;
 	}
-	if (!init_devbuf(&buff_dst, desc_dst, FALSE, swap_req_dst, hdev_dst, hEvent)) {
-		CloseHandle(hEvent);
+	if (!init_devbuf(&buff_dst, desc_dst, FALSE, swap_req_dst, hdev_dst, ctx.hEvent)) {
+		CloseHandle(ctx.hEvent);
 		err("%s: failed to initialize %s buffer", __FUNCTION__, desc_dst);
 		cleanup_devbuf(&buff_src);
 		return;
@@ -612,12 +648,17 @@ usbip_forward(HANDLE hdev_src, HANDLE hdev_dst, BOOL inbound)
 	buff_src.peer = &buff_dst;
 	buff_dst.peer = &buff_src;
 
-	signal(SIGINT, signalhandler);
+	wait_handles[0] = ctx.hEvent;
+	n_wait_handles = 1;
+	if (cancel != NULL && cancel->hEvent != NULL) {
+		wait_handles[1] = cancel->hEvent;
+		n_wait_handles = 2;
+	}
 
-	while (!interrupted) {
-		if (!read_write_dev(&buff_src, &buff_dst))
+	while (!forward_is_cancelled(cancel)) {
+		if (!read_write_dev(&ctx, &buff_src, &buff_dst))
 			break;
-		if (!read_write_dev(&buff_dst, &buff_src))
+		if (!read_write_dev(&ctx, &buff_dst, &buff_src))
 			break;
 
 		if (buff_src.invalid || buff_dst.invalid)
@@ -625,26 +666,28 @@ usbip_forward(HANDLE hdev_src, HANDLE hdev_dst, BOOL inbound)
 		if (buff_src.in_reading && buff_dst.in_reading &&
 			(buff_src.in_writing || BUFREMAIN_C(&buff_dst) == 0) &&
 			(buff_dst.in_writing || BUFREMAIN_C(&buff_src) == 0)) {
-			WaitForSingleObjectEx(hEvent, INFINITE, TRUE);
-			ResetEvent(hEvent);
+			DWORD	wait_rc;
+
+			wait_rc = WaitForMultipleObjectsEx(n_wait_handles, wait_handles,
+				FALSE, INFINITE, TRUE);
+			if (wait_rc == WAIT_OBJECT_0 + 1)
+				break;
+			if (wait_rc == WAIT_OBJECT_0)
+				ResetEvent(ctx.hEvent);
 		}
 	}
 
-	if (interrupted) {
-		info("CTRL-C received\n");
-	}
-	signal(SIGINT, SIG_DFL);
+	if (forward_is_cancelled(cancel))
+		info("forwarding canceled");
 
-	if (buff_src.in_reading)
-		CancelIoEx(hdev_src, &buff_src.ovs[0]);
-	if (buff_dst.in_reading)
-		CancelIoEx(hdev_dst, &buff_dst.ovs[0]);
+	cancel_devbuf_io(&buff_src);
+	cancel_devbuf_io(&buff_dst);
 
 	while (buff_src.in_reading || buff_dst.in_reading || buff_src.in_writing || buff_dst.in_writing) {
-		WaitForSingleObjectEx(hEvent, INFINITE, TRUE);
+		WaitForSingleObjectEx(ctx.hEvent, INFINITE, TRUE);
 	}
 
 	cleanup_devbuf(&buff_src);
 	cleanup_devbuf(&buff_dst);
-	CloseHandle(hEvent);
+	CloseHandle(ctx.hEvent);
 }

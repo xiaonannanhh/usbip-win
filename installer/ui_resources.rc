@@ -1,0 +1,65 @@
+#include <winver.h>
+
+#include "ui_resource.h"
+#include "version_resource.h"
+
+#pragma code_page(65001)
+
+#if defined(UI_X64)
+#define UI_ARCH "x64"
+#elif defined(UI_X86)
+#define UI_ARCH "x86"
+#else
+#error Define UI_X86 or UI_X64 when compiling ui_resources.rc.
+#endif
+
+#if defined(UI_SERVER)
+#define UI_PRODUCT "USBRelay " UI_ARCH " Server UI"
+#define UI_EXE_NAME "usbrelay-server-ui.exe"
+#elif defined(UI_STANDARD_SERVER)
+#define UI_PRODUCT "打印机内网共享服务端 (" UI_ARCH ")"
+#define UI_EXE_NAME "usbrelay-standard-server-ui.exe"
+#elif defined(UI_PORT_TOOL)
+#define UI_PRODUCT "打印机内网共享配置工具端 (" UI_ARCH ")"
+#define UI_EXE_NAME "usbrelay-port-tool-ui.exe"
+#elif defined(UI_CLIENT)
+#define UI_PRODUCT "USBRelay " UI_ARCH " Client UI"
+#define UI_EXE_NAME "usbrelay-client-ui.exe"
+#else
+#error Define UI_SERVER, UI_STANDARD_SERVER, UI_PORT_TOOL, or UI_CLIENT when compiling ui_resources.rc.
+#endif
+
+IDR_UI_MANIFEST 24 "ui.manifest"
+IDI_APP_ICON ICON "app.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION PRODUCT_VERSION_COMMA
+ PRODUCTVERSION PRODUCT_VERSION_COMMA
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Open Source Project"
+            VALUE "FileDescription", UI_PRODUCT
+            VALUE "FileVersion", PRODUCT_VERSION_STRING
+            VALUE "InternalName", UI_EXE_NAME
+            VALUE "OriginalFilename", UI_EXE_NAME
+            VALUE "ProductName", UI_PRODUCT
+            VALUE "ProductVersion", PRODUCT_VERSION_STRING
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

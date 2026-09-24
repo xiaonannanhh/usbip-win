@@ -5,54 +5,24 @@
 #include "usbip_setupdi.h"
 #include "usbip_forward.h"
 
-typedef struct {
-	HANDLE	hdev;
-	SOCKET	sockfd;
-} forwarder_ctx_t;
-
-static VOID CALLBACK
-forwarder_stub(PTP_CALLBACK_INSTANCE inst, PVOID ctx, PTP_WORK work)
-{
-	forwarder_ctx_t	*pctx = (forwarder_ctx_t *)ctx;
-
-	dbg("stub forwarding started");
-
-	usbip_forward((HANDLE)pctx->sockfd, pctx->hdev, TRUE);
-
-	closesocket(pctx->sockfd);
-	CloseHandle(pctx->hdev);
-	free(pctx);
-
-	CloseThreadpoolWork(work);
-
-	dbg("stub forwarding stopped");
-}
-
 static int
 export_device(devno_t devno, SOCKET sockfd)
 {
-	PTP_WORK	work;
-	forwarder_ctx_t	*pctx;
+	HANDLE	hdev;
 
-	pctx = (forwarder_ctx_t *)malloc(sizeof(forwarder_ctx_t));
-	if (pctx == NULL) {
-		err("export_device: out of memory");
-		return -1;
-	}
-	pctx->hdev = open_stub_dev(devno);
-	if (pctx->hdev == INVALID_HANDLE_VALUE) {
+	hdev = open_stub_dev(devno);
+	if (hdev == INVALID_HANDLE_VALUE) {
 		err("export_device: cannot open devno: %hhu", devno);
 		return -1;
 	}
-	pctx->sockfd = sockfd;
 
-	work = CreateThreadpoolWork(forwarder_stub, pctx, NULL);
-	if (work == NULL) {
-		err("export_device: thread pool error: %lx", GetLastError());
-		CloseHandle(pctx->hdev);
-		free(pctx);
+	if (!usbipd_forwarder_start(hdev, sockfd)) {
+		err("export_device: cannot start forwarding devno: %hhu", devno);
+		CloseHandle(hdev);
+		closesocket(sockfd);
+		return -1;
 	}
-	SubmitThreadpoolWork(work);
+
 	return 0;
 }
 

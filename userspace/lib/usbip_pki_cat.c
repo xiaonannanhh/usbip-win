@@ -74,16 +74,21 @@ add_file_hash(HANDLE hCat, LPCSTR path, LPCSTR fname, BOOL isPEType)
 	CRYPTCATMEMBER	*pCatMember;
 	WCHAR	wstrHash[2 * SHA1_HASH_LENGTH + 1], *wfname;
 	BYTE	pbHash[SHA1_HASH_LENGTH];
-	char	*fpath;
+	char	*fpath = NULL;
 	BYTE	pbEncoded[64];
 	DWORD	cbEncoded;
 	SPC_LINK	sSPCLink;
 	SIP_INDIRECT_DATA	sSIPData;
+	BOOL	res = FALSE;
 
+	wfname = NULL;
 	asprintf(&fpath, "%s\\%s", path, fname);
+	if (fpath == NULL) {
+		err("unable to build path for: %s", fname);
+		goto out;
+	}
 	if (!calc_hash(fpath, pbHash)) {
-		free(fpath);
-		return FALSE;
+		goto out;
 	}
 
 	convert_to_hashstr(pbHash, wstrHash);
@@ -102,13 +107,13 @@ add_file_hash(HANDLE hCat, LPCSTR path, LPCSTR fname, BOOL isPEType)
 		sSPCImageData.pFile = &sSPCLink;
 		if (!CryptEncodeObject(X509_ASN_ENCODING, OBJID_SPC_PE_IMAGE, &sSPCImageData, pbEncoded, &cbEncoded)) {
 			err("failed to encode SPC for pe image: %s", fname);
-			return FALSE;
+			goto out;
 		}
 	}
 	else {
 		if (!CryptEncodeObject(X509_ASN_ENCODING, OBJID_SPC_CAB_DATA, &sSPCLink, pbEncoded, &cbEncoded)) {
 			err("failed to encode SPC for data: %s", fname);
-			return FALSE;
+			goto out;
 		}
 	}
 	// Populate the SHA1 Hash OID
@@ -123,19 +128,25 @@ add_file_hash(HANDLE hCat, LPCSTR path, LPCSTR fname, BOOL isPEType)
 	pCatMember = CryptCATPutMemberInfo(hCat, NULL, wstrHash, (GUID*)(isPEType ? &pe_guid : &inf_guid), 0x200, sizeof(sSIPData), (BYTE*)&sSIPData);
 	if (pCatMember == NULL) {
 		err("failed to add cat entry: %s", fname);
-		return FALSE;
+		goto out;
 	}
 
 	wfname = utf8_to_wchar(fname);
+	if (wfname == NULL) {
+		err("unable to convert filename to UTF-16: %s", fname);
+		goto out;
+	}
 	// Add the "File" and "OSAttr" attributes to the newly created member
 	if (CryptCATPutAttrInfo(hCat, pCatMember, L"File", ATTR_FLAGS, 2 * ((DWORD)wcslen(wfname) + 1), (BYTE*)wfname) == NULL ||
 		CryptCATPutAttrInfo(hCat, pCatMember, L"OSAttr", ATTR_FLAGS, 2 * ((DWORD)wcslen(wszOSAttr) + 1), (BYTE*)wszOSAttr) == NULL) {
-		free(wfname);
 		err("unable to create attributes: %s", fname);
-		return FALSE;
+		goto out;
 	}
+	res = TRUE;
+out:
 	free(wfname);
-	return TRUE;
+	free(fpath);
+	return res;
 }
 
 BOOL
@@ -179,8 +190,9 @@ build_cat(LPCSTR path, LPCSTR catname, LPCSTR hwid)
 		goto out;
 	}
 
-	add_file_hash(hCat, path, "usbip_stub.sys", TRUE);
-	add_file_hash(hCat, path, "usbip_stub.inf", FALSE);
+	if (!add_file_hash(hCat, path, "usbip_stub.sys", TRUE) ||
+	    !add_file_hash(hCat, path, "usbip_stub.inf", FALSE))
+		goto out;
 
 	if (!CryptCATPersistStore(hCat)) {
 		err("unable to sort cat: %s", path);

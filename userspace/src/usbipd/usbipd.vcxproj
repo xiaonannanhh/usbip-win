@@ -92,12 +92,12 @@
       <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <AdditionalIncludeDirectories>..\..\..\include; ..\..\lib; windows</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>HAVE_CONFIG_H</PreprocessorDefinitions>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;_WIN32_WINNT=0x0601;WINVER=0x0601;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>setupapi.lib;ws2_32.lib</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;setupapi.lib;ws2_32.lib;iphlpapi.lib;winspool.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -106,12 +106,12 @@
       <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <AdditionalIncludeDirectories>..\..\..\include; ..\..\lib; windows</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>HAVE_CONFIG_H</PreprocessorDefinitions>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;_WIN32_WINNT=0x0601;WINVER=0x0601;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>setupapi.lib;ws2_32.lib</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;setupapi.lib;ws2_32.lib;iphlpapi.lib;winspool.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -125,13 +125,13 @@
       <EnableFiberSafeOptimizations>true</EnableFiberSafeOptimizations>
       <AdditionalIncludeDirectories>..\..\..\include; ..\..\lib; windows</AdditionalIncludeDirectories>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <PreprocessorDefinitions>HAVE_CONFIG_H</PreprocessorDefinitions>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;_WIN32_WINNT=0x0601;WINVER=0x0601;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>setupapi.lib;ws2_32.lib</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;setupapi.lib;ws2_32.lib;iphlpapi.lib;winspool.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -144,27 +144,30 @@
       <OmitFramePointers>true</OmitFramePointers>
       <EnableFiberSafeOptimizations>true</EnableFiberSafeOptimizations>
       <AdditionalIncludeDirectories>..\..\..\include; ..\..\lib; windows</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>HAVE_CONFIG_H</PreprocessorDefinitions>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;_WIN32_WINNT=0x0601;WINVER=0x0601;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>setupapi.lib;ws2_32.lib</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;setupapi.lib;ws2_32.lib;iphlpapi.lib;winspool.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="usbipd.c" />
     <ClCompile Include="usbipd_accept.c" />
+    <ClCompile Include="usbipd_forward.c" />
     <ClCompile Include="usbipd_import.c" />
     <ClCompile Include="usbipd_list.c" />
+    <ClCompile Include="usbipd_print.c" />
     <ClCompile Include="usbipd_sock.c" />
     <ClCompile Include="usbipd_stub.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\config.h" />
     <ClInclude Include="usbipd.h" />
+    <ClInclude Include="usbipd_print.h" />
     <ClInclude Include="usbipd_stub.h" />
   </ItemGroup>
   <ItemGroup>

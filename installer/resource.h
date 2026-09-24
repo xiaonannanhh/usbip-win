@@ -1,0 +1,7 @@
+#ifndef USBRELAY_SETUP_RESOURCE_H
+#define USBRELAY_SETUP_RESOURCE_H
+
+#define IDR_PAYLOAD 101
+#define IDI_APP_ICON 102
+
+#endif

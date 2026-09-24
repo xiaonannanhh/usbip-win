@@ -24,6 +24,25 @@
 #include "usbip_forward.h"
 #include "usbip_wudev.h"
 
+static usbip_forward_cancel_t *attach_cancel;
+
+static BOOL WINAPI
+attach_ctrl_handler(DWORD type)
+{
+	switch (type) {
+	case CTRL_C_EVENT:
+	case CTRL_BREAK_EVENT:
+	case CTRL_CLOSE_EVENT:
+	case CTRL_LOGOFF_EVENT:
+	case CTRL_SHUTDOWN_EVENT:
+		if (attach_cancel != NULL)
+			usbip_forward_cancel_request(attach_cancel);
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
 static const char usbip_attach_usage_string[] =
 	"usbip attach <args>\n"
 	"    -r, --remote=<host>    The machine with exported USB devices\n"
@@ -45,14 +64,14 @@ import_device(SOCKET sockfd, usbip_wudev_t *wudev, const char *instid, HANDLE *p
 	hdev = usbip_vhci_driver_open();
 	if (hdev == INVALID_HANDLE_VALUE) {
 		err("open vhci driver");
-		return 1;
+		return -1;
 	}
 
 	port = usbip_vhci_get_free_port(hdev);
 	if (port <= 0) {
 		err("no free port");
 		usbip_vhci_driver_close(hdev);
-		return 1;
+		return -1;
 	}
 
 	dbg("got free port %d", port);
@@ -62,7 +81,7 @@ import_device(SOCKET sockfd, usbip_wudev_t *wudev, const char *instid, HANDLE *p
 	if (rc < 0) {
 		err("import device");
 		usbip_vhci_driver_close(hdev);
-		return 1;
+		return -1;
 	}
 
 	*phdev = hdev;
@@ -85,7 +104,7 @@ static int query_import_device(SOCKET sockfd, const char *busid, HANDLE *phdev, 
 	rc = usbip_net_send_op_common(sockfd, OP_REQ_IMPORT, 0);
 	if (rc < 0) {
 		err("send op_common");
-		return 1;
+		return -1;
 	}
 
 	strncpy_s(request.busid, USBIP_BUS_ID_SIZE, busid, sizeof(request.busid));
@@ -95,20 +114,20 @@ static int query_import_device(SOCKET sockfd, const char *busid, HANDLE *phdev, 
 	rc = usbip_net_send(sockfd, (void *)&request, sizeof(request));
 	if (rc < 0) {
 		err("send op_import_request");
-		return 1;
+		return -1;
 	}
 
 	/* recieve a reply */
 	rc = usbip_net_recv_op_common(sockfd, &code);
 	if (rc < 0) {
 		err("recv op_common");
-		return 1;
+		return -1;
 	}
 
 	rc = usbip_net_recv(sockfd, (void *)&reply, sizeof(reply));
 	if (rc < 0) {
 		err("recv op_import_reply");
-		return 1;
+		return -1;
 	}
 
 	PACK_OP_IMPORT_REPLY(0, &reply);
@@ -116,7 +135,7 @@ static int query_import_device(SOCKET sockfd, const char *busid, HANDLE *phdev, 
 	/* check the reply */
 	if (strncmp(reply.udev.busid, busid, sizeof(reply.udev.busid))) {
 		err("recv different busid %s", reply.udev.busid);
-		return 1;
+		return -1;
 	}
 
 	get_wudev(sockfd, &wuDev, &reply.udev);
@@ -131,6 +150,7 @@ attach_device(const char *host, const char *busid, const char *instid)
 	SOCKET	sockfd;
 	int	rhport;
 	HANDLE	hdev = INVALID_HANDLE_VALUE;
+	usbip_forward_cancel_t	cancel;
 
 	sockfd = usbip_net_tcp_connect(host, usbip_port_string);
 	if (sockfd == INVALID_SOCKET) {
@@ -139,13 +159,30 @@ attach_device(const char *host, const char *busid, const char *instid)
 	}
 
 	rhport = query_import_device(sockfd, busid, &hdev, instid);
-	if (rhport < 0) {
+	if (rhport <= 0) {
 		err("query");
+		if (hdev != INVALID_HANDLE_VALUE)
+			usbip_vhci_driver_close(hdev);
+		closesocket(sockfd);
 		return 1;
 	}
 
-	usbip_forward(hdev, (HANDLE)sockfd, FALSE);
+	if (!usbip_forward_cancel_init(&cancel)) {
+		err("failed to initialize cancellation");
+		usbip_vhci_detach_device(hdev, rhport);
+		usbip_vhci_driver_close(hdev);
+		closesocket(sockfd);
+		return 1;
+	}
 
+	attach_cancel = &cancel;
+	SetConsoleCtrlHandler(attach_ctrl_handler, TRUE);
+
+	usbip_forward(hdev, (HANDLE)sockfd, FALSE, &cancel);
+
+	SetConsoleCtrlHandler(attach_ctrl_handler, FALSE);
+	attach_cancel = NULL;
+	usbip_forward_cancel_cleanup(&cancel);
 	usbip_vhci_detach_device(hdev, rhport);
 
 	usbip_vhci_driver_close(hdev);

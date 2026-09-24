@@ -1,0 +1,69 @@
+#include <winver.h>
+#include "resource.h"
+#include "version_resource.h"
+
+#pragma code_page(65001)
+
+#if defined(SETUP_X64)
+#define SETUP_ARCH "x64"
+#elif defined(SETUP_X86)
+#define SETUP_ARCH "x86"
+#else
+#error Define SETUP_X86 or SETUP_X64 when compiling setup.rc.
+#endif
+
+#if defined(SETUP_SERVER)
+#define SETUP_PRODUCT "USBRelay " SETUP_ARCH " Server Setup"
+#define SETUP_PAYLOAD "setup-payload.cab"
+#define SETUP_EXE_NAME "USBRelay-Server-Setup-" SETUP_ARCH ".exe"
+#elif defined(SETUP_STANDARD_SERVER)
+#define SETUP_PRODUCT "打印机内网共享服务端 (" SETUP_ARCH ") 安装程序"
+#define SETUP_PAYLOAD "setup-payload.cab"
+#define SETUP_EXE_NAME "USBRelay-Standard-Server-Setup-" SETUP_ARCH ".exe"
+#elif defined(SETUP_PORT_TOOL)
+#define SETUP_PRODUCT "打印机内网共享配置工具端 (" SETUP_ARCH ") 安装程序"
+#define SETUP_PAYLOAD "setup-payload.cab"
+#define SETUP_EXE_NAME "USBRelay-Standard-Port-Tool-Setup-" SETUP_ARCH ".exe"
+#elif defined(SETUP_CLIENT)
+#define SETUP_PRODUCT "USBRelay " SETUP_ARCH " Client Setup"
+#define SETUP_PAYLOAD "setup-payload.cab"
+#define SETUP_EXE_NAME "USBRelay-Client-Setup-" SETUP_ARCH ".exe"
+#else
+#error Define SETUP_SERVER, SETUP_STANDARD_SERVER, SETUP_PORT_TOOL, or SETUP_CLIENT when compiling setup.rc.
+#endif
+
+IDR_PAYLOAD RCDATA SETUP_PAYLOAD
+IDI_APP_ICON ICON "app.ico"
+1 24 "setup.manifest"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION PRODUCT_VERSION_COMMA
+ PRODUCTVERSION PRODUCT_VERSION_COMMA
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Open Source Project"
+            VALUE "FileDescription", SETUP_PRODUCT
+            VALUE "FileVersion", PRODUCT_VERSION_STRING
+            VALUE "InternalName", SETUP_EXE_NAME
+            VALUE "OriginalFilename", SETUP_EXE_NAME
+            VALUE "ProductName", SETUP_PRODUCT
+            VALUE "ProductVersion", PRODUCT_VERSION_STRING
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

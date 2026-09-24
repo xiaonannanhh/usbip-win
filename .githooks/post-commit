@@ -1,0 +1,3 @@
+#!/bin/sh
+repo_root=$(git rev-parse --show-toplevel) || exit 0
+exec powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$repo_root/.githooks/post-commit.ps1"

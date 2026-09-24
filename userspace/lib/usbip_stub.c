@@ -45,53 +45,98 @@ copy_file(const char *fname, const char *path_drvpkg)
 	free(path_dst);
 }
 
-static void
+static BOOL
+replace_token(char *buf, size_t buf_size, const char *token, const char *replacement)
+{
+	size_t	token_len;
+	size_t	replacement_len;
+	size_t	buf_len;
+	char	*mark;
+
+	token_len = strlen(token);
+	replacement_len = strlen(replacement);
+	if (token_len == 0)
+		return TRUE;
+
+	buf_len = strlen(buf);
+	while ((mark = strstr(buf, token)) != NULL) {
+		size_t	suffix_len;
+
+		if (buf_len - token_len + replacement_len + 1 > buf_size)
+			return FALSE;
+
+		suffix_len = buf_len - (size_t)(mark - buf) - token_len;
+		memmove(mark + replacement_len, mark + token_len, suffix_len + 1);
+		memcpy(mark, replacement, replacement_len);
+		buf_len = buf_len - token_len + replacement_len;
+	}
+	return TRUE;
+}
+
+static BOOL
 translate_inf(const char *id_hw, FILE *in, FILE *out)
 {
 	char	buf[4096];
 	char	*line;
+#if defined(_WIN64)
+	const char	*arch = "amd64";
+#else
+	const char	*arch = "x86";
+#endif
 
 	while ((line = fgets(buf, 4096, in))) {
-		char	*mark;
-
-		mark = strstr(line, "%hwid%");
-		if (mark) {
-			strcpy_s(mark, 4096 - (mark - buf), id_hw);
+		if (!replace_token(line, sizeof(buf), "%hwid%", id_hw) ||
+		    !replace_token(line, sizeof(buf), "$ARCH$", arch)) {
+			err("%s: expanded INF line is too long", __FUNCTION__);
+			return FALSE;
 		}
-		fwrite(line, strlen(line), 1, out);
+		if (fwrite(line, strlen(line), 1, out) != 1) {
+			err("%s: failed to write INF", __FUNCTION__);
+			return FALSE;
+		}
 	}
+	if (ferror(in)) {
+		err("%s: failed to read INF", __FUNCTION__);
+		return FALSE;
+	}
+	return TRUE;
 }
 
-static void
+static BOOL
 copy_stub_inf(const char *id_hw, const char *path_drvpkg)
 {
 	char	*path_inx, *path_dst;
 	char	*path_mod;
 	FILE	*in, *out;
 	errno_t	err;
+	BOOL	ok;
 
 	path_mod = get_module_dir();
 	if (path_mod == NULL)
-		return;
+		return FALSE;
 	asprintf(&path_inx, "%s\\usbip_stub.inx", path_mod);
 	free(path_mod);
 
 	err = fopen_s(&in, path_inx, "r");
 	free(path_inx);
 	if (err != 0) {
-		return;
+		err("%s: failed to open usbip_stub.inx", __FUNCTION__);
+		return FALSE;
 	}
 	asprintf(&path_dst, "%s\\usbip_stub.inf", path_drvpkg);
 	err = fopen_s(&out, path_dst, "w");
 	free(path_dst);
 	if (err != 0) {
+		err("%s: failed to create usbip_stub.inf", __FUNCTION__);
 		fclose(in);
-		return;
+		return FALSE;
 	}
 
-	translate_inf(id_hw, in, out);
+	ok = translate_inf(id_hw, in, out);
 	fclose(in);
-	fclose(out);
+	if (fclose(out) != 0)
+		ok = FALSE;
+	return ok;
 }
 
 static void
@@ -152,7 +197,11 @@ apply_stub_fdo(HDEVINFO dev_info, PSP_DEVINFO_DATA pdev_info_data)
 		return FALSE;
 	}
 	copy_file("usbip_stub.sys", path_drvpkg);
-	copy_stub_inf(id_hw, path_drvpkg);
+	if (!copy_stub_inf(id_hw, path_drvpkg)) {
+		remove_dir_all(path_drvpkg);
+		free(id_hw);
+		return FALSE;
+	}
 
 	if (!build_cat(path_drvpkg, "usbip_stub.cat", id_hw)) {
 		remove_dir_all(path_drvpkg);

@@ -128,6 +128,7 @@ list_exported_devices(const char *host)
 	rc = get_exported_devices(host, sockfd);
 	if (rc < 0) {
 		err("failed to get device list from %s", host);
+		closesocket(sockfd);
 		return -1;
 	}
 

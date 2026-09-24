@@ -1,0 +1,7 @@
+#ifndef USBRELAY_UI_RESOURCE_H
+#define USBRELAY_UI_RESOURCE_H
+
+#define IDR_UI_MANIFEST 1
+#define IDI_APP_ICON 101
+
+#endif
