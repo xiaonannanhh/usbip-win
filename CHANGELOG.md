@@ -2,9 +2,14 @@
 
 版本号采用 `主版本.次版本.修订号`。每次 Git 提交会自动递增修订号，把提交说明写入版本摘要，并列出提交涉及的暂存文件。
 
+## 0.1.3 - 2026-09-24
+
+- 提交说明：fix: ensure changelog is committed before sync
+- 涉及文件：`.githooks/post-commit.ps1`, `CHANGELOG.md`, VERSION, CHANGELOG.md.
+
 ## 0.1.2 - 2026-09-24
 
-- 提交说明：[USBRELAY_PENDING_SUBJECT]
+- 提交说明：feat: add Windows 7 LAN printer relay and versioned packages
 - 涉及文件：`.githooks/commit-msg`, `.githooks/commit-msg.ps1`, `.githooks/post-commit`, `.githooks/post-commit.ps1`, `.githooks/pre-commit`, `.githooks/pre-commit.ps1`, `BUILD_WIN7_CN.md`, `CHANGELOG.md`, `README.md`, `VERSION_SYNC.md`, `driver/lib/libdrv.vcxproj`, `driver/stub/usbip_stub.inx`, `driver/stub/usbip_stub.vcxproj`, `driver/vhci/gencat.bat`, `driver/vhci/usbip_vhci.inf`, `driver/vhci/usbip_vhci.vcxproj`, `include/usbrelay_protocol.h`, `include/usbrelay_standard_protocol.h`, `installer/README.md`, `installer/README_CN.txt`.
 
 ## 0.1.1 - 2026-09-24
