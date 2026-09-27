@@ -2304,6 +2304,10 @@ static BOOL probe_ipv4_port(const wchar_t *address, unsigned int port_number,
 	int socket_error = 0;
 	int socket_error_size = sizeof(socket_error);
 	BOOL success = FALSE;
+	char probe_reply[sizeof(USBRELAY_STANDARD_PROBE_REPLY)];
+	int probe_length;
+	u_long blocking = 0;
+	int socket_timeout;
 
 	if (error != NULL) {
 		*error = ERROR_SUCCESS;
@@ -2343,9 +2347,8 @@ static BOOL probe_ipv4_port(const wchar_t *address, unsigned int port_number,
 		sizeof(remote));
 	if (result == 0) {
 		success = TRUE;
-		goto cleanup;
 	}
-	if (WSAGetLastError() != WSAEWOULDBLOCK &&
+	else if (WSAGetLastError() != WSAEWOULDBLOCK &&
 		WSAGetLastError() != WSAEINPROGRESS &&
 		WSAGetLastError() != WSAEINVAL) {
 		if (error != NULL) {
@@ -2368,6 +2371,54 @@ static BOOL probe_ipv4_port(const wchar_t *address, unsigned int port_number,
 	else if (error != NULL) {
 		*error = result == 0 ? WSAETIMEDOUT :
 			(DWORD)(socket_error != 0 ? socket_error : WSAGetLastError());
+	}
+	if (success) {
+		const char probe[] = USBRELAY_STANDARD_PROBE_MAGIC;
+
+		blocking = 0;
+		socket_timeout = (int)timeout_ms;
+		if (ioctlsocket(socket_handle, FIONBIO, &blocking) ==
+			SOCKET_ERROR ||
+			setsockopt(socket_handle, SOL_SOCKET, SO_RCVTIMEO,
+				(const char *)&socket_timeout, sizeof(socket_timeout)) ==
+			SOCKET_ERROR ||
+			setsockopt(socket_handle, SOL_SOCKET, SO_SNDTIMEO,
+				(const char *)&socket_timeout, sizeof(socket_timeout)) ==
+			SOCKET_ERROR ||
+			send(socket_handle, probe, (int)(sizeof(probe) - 1), 0) !=
+				(int)(sizeof(probe) - 1)) {
+			success = FALSE;
+			if (error != NULL) {
+				*error = (DWORD)WSAGetLastError();
+			}
+		}
+		else {
+			int expected = (int)(sizeof(USBRELAY_STANDARD_PROBE_REPLY) - 1);
+
+			probe_length = 0;
+			while (probe_length < expected) {
+				int received = recv(socket_handle,
+					probe_reply + probe_length, expected - probe_length, 0);
+
+				if (received <= 0) {
+					probe_length = received == SOCKET_ERROR ?
+						SOCKET_ERROR : probe_length;
+					break;
+				}
+				probe_length += received;
+			}
+			if (probe_length != expected ||
+				memcmp(probe_reply, USBRELAY_STANDARD_PROBE_REPLY,
+					expected) != 0) {
+				success = FALSE;
+				if (error != NULL) {
+					*error = probe_length == SOCKET_ERROR ?
+						(DWORD)WSAGetLastError() :
+						(probe_length == 0 ? ERROR_CONNECTION_ABORTED :
+						ERROR_INVALID_DATA);
+				}
+			}
+		}
 	}
 
 cleanup:

@@ -671,53 +671,6 @@ static BOOL assign_printer_port(const wchar_t *device_key,
 	return FALSE;
 }
 
-static BOOL reassign_printer_port(const wchar_t *device_key,
-	const wchar_t *legacy_printer_name,
-	unsigned short current_port, unsigned short *new_port)
-{
-	BOOL used[USBRELAY_STANDARD_PORT_COUNT];
-	HANDLE mutex;
-	unsigned int index;
-
-	if (device_key == NULL || device_key[0] == L'\0' ||
-		new_port == NULL) {
-		SetLastError(ERROR_INVALID_PARAMETER);
-		return FALSE;
-	}
-	*new_port = 0;
-	mutex = acquire_config_mutex();
-	if (mutex == NULL) {
-		return FALSE;
-	}
-	mark_used_ports(device_key, legacy_printer_name, used);
-	if (current_port >= USBRELAY_STANDARD_PORT_BASE &&
-		current_port <= USBRELAY_STANDARD_PORT_LAST) {
-		used[current_port - USBRELAY_STANDARD_PORT_BASE] = TRUE;
-	}
-	for (index = 0; index < USBRELAY_STANDARD_PORT_COUNT; index++) {
-		unsigned short candidate =
-			(unsigned short)(USBRELAY_STANDARD_PORT_BASE + index);
-
-		if (used[index] || !tcp_port_is_available(candidate)) {
-			continue;
-		}
-		if (!write_port_mapping(device_key, candidate)) {
-			release_config_mutex(mutex);
-			return FALSE;
-		}
-		if (legacy_printer_name != NULL &&
-			_wcsicmp(device_key, legacy_printer_name) != 0) {
-			delete_port_mapping(legacy_printer_name);
-		}
-		*new_port = candidate;
-		release_config_mutex(mutex);
-		return TRUE;
-	}
-	release_config_mutex(mutex);
-	SetLastError(ERROR_NO_MORE_ITEMS);
-	return FALSE;
-}
-
 static BOOL write_runtime_dword(const wchar_t *name, DWORD value)
 {
 	HKEY key;
@@ -1259,6 +1212,9 @@ static DWORD WINAPI client_thread(LPVOID parameter)
 	BOOL fin_received = FALSE;
 	BOOL queued = FALSE;
 	BOOL has_data = FALSE;
+	BOOL probe_request = FALSE;
+	BYTE probe_buffer[sizeof(USBRELAY_STANDARD_PROBE_MAGIC) - 1];
+	DWORD probe_bytes = 0;
 	DWORD error = ERROR_SUCCESS;
 	DWORD last_data_tick;
 	DWORD idle_timeout_ms = STANDARD_FIRST_DATA_TIMEOUT_MS;
@@ -1343,6 +1299,48 @@ static DWORD WINAPI client_thread(LPVOID parameter)
 					ERROR_CONNECTION_ABORTED;
 				break;
 			}
+			if (!has_data && !probe_request) {
+				const size_t probe_length =
+					strlen(USBRELAY_STANDARD_PROBE_MAGIC);
+				DWORD offset = 0;
+
+				while (offset < (DWORD)received &&
+					probe_bytes < probe_length &&
+					buffer[offset] ==
+						(BYTE)USBRELAY_STANDARD_PROBE_MAGIC[probe_bytes]) {
+					probe_buffer[probe_bytes++] = buffer[offset++];
+				}
+				if (probe_bytes == probe_length &&
+					offset == (DWORD)received) {
+					const char reply[] = USBRELAY_STANDARD_PROBE_REPLY;
+
+					probe_request = TRUE;
+					if (send(client->socket_handle, reply,
+						(int)(sizeof(reply) - 1), 0) == SOCKET_ERROR) {
+						error = ERROR_CONNECTION_ABORTED;
+					}
+					break;
+				}
+				if (offset == (DWORD)received &&
+					probe_bytes < probe_length) {
+					continue;
+				}
+				if (probe_bytes > 0 &&
+					!write_all_file(file_handle, probe_buffer, probe_bytes,
+						&error)) {
+					break;
+				}
+				client->bytes_received += probe_bytes;
+				if (offset < (DWORD)received &&
+					!write_all_file(file_handle, buffer + offset,
+						(DWORD)received - offset, &error)) {
+					break;
+				}
+				client->bytes_received += (ULONGLONG)received - offset;
+				last_data_tick = GetTickCount();
+				has_data = TRUE;
+				continue;
+			}
 			last_data_tick = GetTickCount();
 			if (!write_all_file(file_handle, buffer, (DWORD)received,
 				&error)) {
@@ -1372,7 +1370,13 @@ cleanup:
 	if (buffer != NULL) {
 		HeapFree(GetProcessHeap(), 0, buffer);
 	}
-	if (error != ERROR_SUCCESS) {
+	if (probe_request) {
+		standard_logw(L"连接探测 sender=%S host=%S printer=\"%ls\" port=%u result=%ls",
+			client->remote_ip, client->remote_host, endpoint->printer_name,
+			(unsigned int)endpoint->raw_port,
+			error == ERROR_SUCCESS ? L"ok" : L"failed");
+	}
+	else if (error != ERROR_SUCCESS) {
 		standard_logw(L"任务 #%ld 接收失败 sender=%S host=%S printer=\"%ls\" port=%u bytes=%I64u error=%lu",
 			(long)client->task_id, client->remote_ip, client->remote_host,
 			endpoint->printer_name, (unsigned int)endpoint->raw_port,
@@ -1694,21 +1698,28 @@ static void remove_unseen_endpoints(
 static BOOL sync_endpoint(StandardEndpoint *endpoint,
 	const UsbRelayStandardPrinterInfo *printer)
 {
-	if (!InterlockedCompareExchange(&endpoint->listening, 0, 0)) {
-		unsigned short retry_port = 0;
+	BOOL listening = InterlockedCompareExchange(&endpoint->listening,
+		0, 0) != 0;
 
-		if (endpoint->raw_port != printer->raw_port) {
-			endpoint->raw_port = printer->raw_port;
+	if (endpoint->raw_port != printer->raw_port) {
+		if (listening) {
+			standard_logw(L"检测到端口映射变化，重新绑定 printer=\"%ls\" old=%u new=%u。",
+				endpoint->printer_name, (unsigned int)endpoint->raw_port,
+				(unsigned int)printer->raw_port);
+			stop_endpoint_listener(endpoint);
 		}
+		endpoint->raw_port = printer->raw_port;
+		listening = FALSE;
+	}
+	if (!listening) {
 		if (start_endpoint_listener(endpoint)) {
 			return TRUE;
 		}
-		if (endpoint->last_error == WSAEADDRINUSE &&
-			reassign_printer_port(endpoint->device_key,
+		set_runtime_port_status(endpoint->raw_port, FALSE);
+		if (endpoint->last_error == WSAEADDRINUSE) {
+			standard_logw(L"打印机端口冲突，保留固定映射 printer=\"%ls\" port=%u；请释放该端口后重启服务端。",
 				endpoint->printer_name,
-				endpoint->raw_port, &retry_port)) {
-			endpoint->raw_port = retry_port;
-			return start_endpoint_listener(endpoint);
+				(unsigned int)endpoint->raw_port);
 		}
 	}
 	return InterlockedCompareExchange(&endpoint->listening, 0, 0) != 0;
@@ -2107,7 +2118,7 @@ static BOOL start_engine(void)
 		g_stop_event = CreateEventW(NULL, TRUE, FALSE,
 			USBRELAY_STANDARD_STOP_EVENT_NAME);
 	}
-	if (g_stop_event == NULL || !open_discovery_socket()) {
+	if (g_stop_event == NULL) {
 		if (g_stop_event != NULL) {
 			CloseHandle(g_stop_event);
 			g_stop_event = NULL;
@@ -2122,6 +2133,9 @@ static BOOL start_engine(void)
 		}
 		WSACleanup();
 		return FALSE;
+	}
+	if (!open_discovery_socket()) {
+		standard_log("UDP discovery unavailable; TCP printer listeners will continue.");
 	}
 	ResetEvent(g_stop_event);
 	InterlockedExchange(&g_stopping, FALSE);
@@ -2187,12 +2201,16 @@ int usbrelay_standard_engine_run(void)
 		if (WaitForSingleObject(g_stop_event, 250) == WAIT_OBJECT_0) {
 			break;
 		}
-		process_discovery_queries();
+		if (g_discovery_socket != INVALID_SOCKET) {
+			process_discovery_queries();
+		}
 		now = GetTickCount();
 		if ((DWORD)(now - last_discovery) >=
 			STANDARD_DISCOVERY_INTERVAL_MS) {
 			last_discovery = now;
-			send_discovery_cycle();
+			if (g_discovery_socket != INVALID_SOCKET) {
+				send_discovery_cycle();
+			}
 		}
 		if ((DWORD)(now - last_refresh) >=
 			STANDARD_REFRESH_INTERVAL_MS) {
